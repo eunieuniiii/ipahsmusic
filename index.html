@@ -1370,49 +1370,58 @@ async function initApp() {
      async function handleNoticeSubmit(e) {
             e.preventDefault();
             if (!isAdminLoggedIn) return;
+
             const editId = document.getElementById('notice-edit-id').value;
             const title = document.getElementById('notice-title-input').value.trim();
             const content = document.getElementById('notice-content-input').value.trim();
             const isImportant = document.getElementById('notice-important-check').checked;
             if (!title || !content) return;
 
+            // 공지는 직접 UPDATE/INSERT만 사용합니다.
+            // .select().single()을 사용하면 PostgREST의 "Cannot coerce the result to a single JSON object"
+            // 오류가 발생할 수 있으므로 저장 결과를 단일 JSON으로 강제하지 않습니다.
             let error = null;
-            let savedNotice = null;
-            const current = editId ? notices.find(n => String(n.id) === String(editId)) : null;
+            let newNotice = null;
 
-            // 기존 RPC를 먼저 시도하고, 현재 DB에서 RPC가 실패하면 직접 저장 방식으로 재시도
             if (editId) {
-                const rpc = await supabaseClient.rpc('admin_upsert_notice', {
-                    p_password: 'ipahs2026', p_id: Number(editId),
-                    p_title: title, p_content: current && current.isHTML ? current.content : content,
-                    p_is_important: isImportant, p_is_html: !!(current && current.isHTML)
-                });
-                error = rpc.error || (!rpc.data ? new Error('공지 수정 RPC가 저장 결과를 반환하지 않았습니다.') : null);
-                savedNotice = rpc.data;
-                if (error) {
-                    const direct = await supabaseClient.from('notices').update({
-                        title, content: current && current.isHTML ? current.content : content,
-                        is_important: isImportant
-                    }).eq('id', Number(editId)).select().single();
-                    error = direct.error;
-                    savedNotice = direct.data;
+                const current = notices.find(n => String(n.id) === String(editId));
+                if (!current) return;
+
+                const result = await supabaseClient.from('notices').update({
+                    title,
+                    content: current.isHTML ? current.content : content,
+                    is_important: isImportant
+                }).eq('id', Number(editId));
+
+                error = result.error;
+                if (!error) {
+                    current.title = title;
+                    if (!current.isHTML) current.content = content;
+                    current.isImportant = isImportant;
                 }
             } else {
                 const newNoticeId = Date.now();
-                const direct = await supabaseClient.from('notices').insert([{
-                    id: newNoticeId, title, content,
-                    date: new Date().toISOString().split('T')[0],
-                    is_important: isImportant, is_html: false
-                }]).select().single();
-                error = direct.error;
-                savedNotice = direct.data;
-                if (error) {
-                    const rpc = await supabaseClient.rpc('admin_upsert_notice', {
-                        p_password: 'ipahs2026', p_id: null, p_title: title,
-                        p_content: content, p_is_important: isImportant, p_is_html: false
-                    });
-                    error = rpc.error || (!rpc.data ? new Error('공지 등록 RPC가 저장 결과를 반환하지 않았습니다.') : null);
-                    savedNotice = rpc.data;
+                const date = new Date().toISOString().split('T')[0];
+
+                const result = await supabaseClient.from('notices').insert([{
+                    id: newNoticeId,
+                    title,
+                    content,
+                    date,
+                    is_important: isImportant,
+                    is_html: false
+                }]);
+
+                error = result.error;
+                if (!error) {
+                    newNotice = {
+                        id: newNoticeId,
+                        title,
+                        content,
+                        date,
+                        isImportant,
+                        isHTML: false
+                    };
                 }
             }
 
@@ -1422,14 +1431,10 @@ async function initApp() {
                 return;
             }
 
-            if (editId && current) {
-                current.title = savedNotice ? savedNotice.title : title;
-                if (!current.isHTML) current.content = savedNotice ? savedNotice.content : content;
-                current.isImportant = savedNotice ? savedNotice.is_important : isImportant;
-            } else if (savedNotice) {
-                notices.unshift({ id: savedNotice.id, title: savedNotice.title, content: savedNotice.content, date: savedNotice.date, isImportant: savedNotice.is_important, isHTML: savedNotice.is_html });
-            }
-            closeNoticeCreateModal(); renderNotices(); renderAdminPanel();
+            if (newNotice) notices.unshift(newNotice);
+            closeNoticeCreateModal();
+            renderNotices();
+            renderAdminPanel();
             showToast(editId ? '공지사항이 성공적으로 수정되었습니다!' : '새 공지사항이 성공적으로 등록되었습니다!');
         }
 
@@ -2051,7 +2056,5 @@ trackerData.unshift(newItem);
     </script>
 </body>
 </html>
-
-
 
 
