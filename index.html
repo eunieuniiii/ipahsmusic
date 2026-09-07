@@ -1391,7 +1391,7 @@ async function initApp() {
                     title,
                     content: current.isHTML ? current.content : content,
                     is_important: isImportant
-                }).eq('id', Number(editId));
+                }).eq('id', String(editId));
 
                 error = result.error;
                 if (!error) {
@@ -1943,16 +1943,21 @@ trackerData.unshift(newItem);
 
  async function deleteNotice(id) {
             if (!isAdminLoggedIn) return;
-            const { data, error } = await supabaseClient.rpc('admin_delete_notice', {
-                p_password: 'ipahs2026',
-                p_id: Number(id)
-            });
-            if (error || data !== true) {
-                console.error('공지사항 삭제 오류:', error || '교사 인증 실패');
-                showToast('공지사항 삭제에 실패했습니다. 교사 인증 상태를 확인해 주세요.', 'warning');
+
+            // 공지 삭제는 RPC가 아니라 테이블 DELETE를 직접 사용합니다.
+            // 이렇게 하면 RPC 반환형(JSON object) 문제를 완전히 피할 수 있습니다.
+            const result = await supabaseClient
+                .from('notices')
+                .delete()
+                .eq('id', String(id));
+
+            if (result.error) {
+                console.error('공지사항 삭제 오류:', result.error);
+                showToast('공지사항 삭제에 실패했습니다: ' + (result.error.message || 'DB 권한을 확인해 주세요.'), 'warning');
                 return;
             }
-            notices = notices.filter(n => Number(n.id) !== Number(id));
+
+            notices = notices.filter(n => String(n.id) !== String(id));
             renderNotices();
             renderAdminPanel();
             showToast('공지사항이 삭제되었습니다.');
@@ -2056,5 +2061,6 @@ trackerData.unshift(newItem);
     </script>
 </body>
 </html>
+
 
 
