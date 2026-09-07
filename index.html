@@ -813,7 +813,7 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLI
     <script>
         // Global Application State Initialization
         let currentDate = new Date(); currentDate.setDate(1); // Current month default
-        let isAdminLoggedIn = false;
+        let isAdminLoggedIn = localStorage.getItem('ipahs_admin_logged_in') === 'true';
 
         // Site Access Gate Unlock Function (Password: ipahs5)
         function unlockSite(e) {
@@ -1531,7 +1531,7 @@ reviews.unshift({
 
             if (error) {
                 console.error('일정 저장 오류:', error);
-                showToast('일정 저장에 실패했습니다. 교사 인증 상태를 확인해 주세요.', 'warning');
+                showToast('일정 저장 실패: ' + (error.message || error.code || '알 수 없는 오류') + (error.hint ? ' / ' + error.hint : ''), 'warning');
                 return;
             }
             closeAddEventModal();
@@ -1918,6 +1918,7 @@ trackerData.unshift(newItem);
             // Teacher Password: ipahs2026
             if (pass === 'ipahs2026') {
                 isAdminLoggedIn = true;
+                localStorage.setItem('ipahs_admin_logged_in', 'true');
                 document.getElementById('admin-badge').classList.remove('hidden');
                 document.getElementById('admin-logout-btn').classList.remove('hidden');
                 document.getElementById('admin-login-btn').classList.add('hidden');
@@ -1933,6 +1934,7 @@ trackerData.unshift(newItem);
 
         function handleAdminLogout() {
             isAdminLoggedIn = false;
+            localStorage.removeItem('ipahs_admin_logged_in');
             document.getElementById('admin-badge').classList.add('hidden');
             document.getElementById('admin-logout-btn').classList.add('hidden');
             document.getElementById('admin-login-btn').classList.remove('hidden');
@@ -1996,3 +1998,4 @@ trackerData.unshift(newItem);
     </script>
 </body>
 </html>
+
