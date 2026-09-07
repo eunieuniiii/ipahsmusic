@@ -1383,41 +1383,57 @@ async function initApp() {
             const isImportant = document.getElementById('notice-important-check').checked;
             if (!title || !content) return;
 
-            let error;
+            let error = null;
+            let savedNotice = null;
+            const adminPassword = 'ipahs2026';
+
+            // 공지사항은 교사 인증용 SECURITY DEFINER RPC를 통해 저장한다.
+            // 직접 update/insert하면 RLS 권한에 따라 수정이 막힐 수 있다.
             if (editId) {
                 const current = notices.find(n => String(n.id) === String(editId));
                 if (!current) return;
-                const result = await supabaseClient.from('notices').update({
-                    title, content: current.isHTML ? current.content : content,
-                    is_important: isImportant
-                }).eq('id', Number(editId));
+
+                const result = await supabaseClient.rpc('admin_upsert_notice', {
+                    p_password: adminPassword,
+                    p_id: Number(editId),
+                    p_title: title,
+                    p_content: current.isHTML ? current.content : content,
+                    p_is_important: isImportant,
+                    p_is_html: !!current.isHTML
+                });
                 error = result.error;
-                if (!error) {
-                    current.title = title;
-                    if (!current.isHTML) current.content = content;
-                    current.isImportant = isImportant;
+                savedNotice = result.data;
+
+                if (!error && savedNotice) {
+                    current.title = savedNotice.title;
+                    if (!current.isHTML) current.content = savedNotice.content;
+                    current.isImportant = savedNotice.is_important;
+                    current.isHTML = savedNotice.is_html;
                 }
             } else {
-                const newNoticeId = Date.now();
-                const result = await supabaseClient.from('notices').insert([{
-                    id: newNoticeId,
-                    title, content,
-                    date: new Date().toISOString().split('T')[0],
-                    is_important: isImportant,
-                    is_html: false
-                }]).select().single();
+                const result = await supabaseClient.rpc('admin_upsert_notice', {
+                    p_password: adminPassword,
+                    p_id: null,
+                    p_title: title,
+                    p_content: content,
+                    p_is_important: isImportant,
+                    p_is_html: false
+                });
                 error = result.error;
-                if (!error && result.data) {
-                    notices.unshift({
-                        id: result.data.id, title: result.data.title, content: result.data.content,
-                        date: result.data.date, isImportant: result.data.is_important, isHTML: result.data.is_html
+                savedNotice = result.data;
+
+                if (!error && savedNotice) {
+                    const n = Array.isArray(savedNotice) ? savedNotice[0] : savedNotice;
+                    if (n) notices.unshift({
+                        id: n.id, title: n.title, content: n.content,
+                        date: n.date, isImportant: n.is_important, isHTML: n.is_html
                     });
                 }
             }
 
-            if (error) {
-                console.error('공지 저장 오류:', error);
-                showToast('공지 저장에 실패했습니다. 교사 인증 상태를 확인해 주세요.', 'warning');
+            if (error || !savedNotice) {
+                console.error('공지 저장 오류:', error || 'RPC 결과 없음');
+                showToast('공지 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.', 'warning');
                 return;
             }
             closeNoticeCreateModal();
@@ -1931,9 +1947,12 @@ trackerData.unshift(newItem);
 
  async function deleteNotice(id) {
             if (!isAdminLoggedIn) return;
-            const { error } = await supabaseClient.from('notices').delete().eq('id', Number(id));
-            if (error) {
-                console.error('공지사항 삭제 오류:', error);
+            const { data, error } = await supabaseClient.rpc('admin_delete_notice', {
+                p_password: 'ipahs2026',
+                p_id: Number(id)
+            });
+            if (error || data !== true) {
+                console.error('공지사항 삭제 오류:', error || '교사 인증 실패');
                 showToast('공지사항 삭제에 실패했습니다. 교사 인증 상태를 확인해 주세요.', 'warning');
                 return;
             }
