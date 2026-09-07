@@ -1214,15 +1214,9 @@ async function initApp() {
                     if (ev.type === '원서') badgeBg = 'bg-emerald-500';
                     if (ev.type === '신청') badgeBg = 'bg-amber-500';
 
-                    let teacherAction = '';
-                    if (isAdminLoggedIn) {
-                        teacherAction = `
-                            <div class="flex items-center space-x-1 ml-2">
-                                <button onclick="editExamEvent('${ev.id}')" class="text-[10px] bg-indigo-800 hover:bg-indigo-700 px-2 py-0.5 rounded text-indigo-100 font-bold transition">수정</button>
-                                <button onclick="deleteExamEventDirect('${ev.id}')" class="text-[10px] bg-rose-800 hover:bg-rose-700 px-2 py-0.5 rounded text-rose-100 font-bold transition">삭제</button>
-                            </div>
-                        `;
-                    }
+                    // 메인 캘린더에서는 대학 일정 수정/삭제 버튼을 표시하지 않습니다.
+                    // 일정 관리는 교사 관리자 화면에서만 수행합니다.
+                    let teacherAction = isAdminLoggedIn ? `<span class="hidden"> </span>` : '';
 
                     return `
                     <div class="flex items-center justify-between bg-indigo-950/70 p-2 rounded-lg border border-indigo-800">
@@ -1376,7 +1370,6 @@ async function initApp() {
      async function handleNoticeSubmit(e) {
             e.preventDefault();
             if (!isAdminLoggedIn) return;
-
             const editId = document.getElementById('notice-edit-id').value;
             const title = document.getElementById('notice-title-input').value.trim();
             const content = document.getElementById('notice-content-input').value.trim();
@@ -1385,60 +1378,58 @@ async function initApp() {
 
             let error = null;
             let savedNotice = null;
-            const adminPassword = 'ipahs2026';
+            const current = editId ? notices.find(n => String(n.id) === String(editId)) : null;
 
-            // 공지사항은 교사 인증용 SECURITY DEFINER RPC를 통해 저장한다.
-            // 직접 update/insert하면 RLS 권한에 따라 수정이 막힐 수 있다.
+            // 기존 RPC를 먼저 시도하고, 현재 DB에서 RPC가 실패하면 직접 저장 방식으로 재시도
             if (editId) {
-                const current = notices.find(n => String(n.id) === String(editId));
-                if (!current) return;
-
-                const result = await supabaseClient.rpc('admin_upsert_notice', {
-                    p_password: adminPassword,
-                    p_id: Number(editId),
-                    p_title: title,
-                    p_content: current.isHTML ? current.content : content,
-                    p_is_important: isImportant,
-                    p_is_html: !!current.isHTML
+                const rpc = await supabaseClient.rpc('admin_upsert_notice', {
+                    p_password: 'ipahs2026', p_id: Number(editId),
+                    p_title: title, p_content: current && current.isHTML ? current.content : content,
+                    p_is_important: isImportant, p_is_html: !!(current && current.isHTML)
                 });
-                error = result.error;
-                savedNotice = result.data;
-
-                if (!error && savedNotice) {
-                    current.title = savedNotice.title;
-                    if (!current.isHTML) current.content = savedNotice.content;
-                    current.isImportant = savedNotice.is_important;
-                    current.isHTML = savedNotice.is_html;
+                error = rpc.error || (!rpc.data ? new Error('공지 수정 RPC가 저장 결과를 반환하지 않았습니다.') : null);
+                savedNotice = rpc.data;
+                if (error) {
+                    const direct = await supabaseClient.from('notices').update({
+                        title, content: current && current.isHTML ? current.content : content,
+                        is_important: isImportant
+                    }).eq('id', Number(editId)).select().single();
+                    error = direct.error;
+                    savedNotice = direct.data;
                 }
             } else {
-                const result = await supabaseClient.rpc('admin_upsert_notice', {
-                    p_password: adminPassword,
-                    p_id: null,
-                    p_title: title,
-                    p_content: content,
-                    p_is_important: isImportant,
-                    p_is_html: false
-                });
-                error = result.error;
-                savedNotice = result.data;
-
-                if (!error && savedNotice) {
-                    const n = Array.isArray(savedNotice) ? savedNotice[0] : savedNotice;
-                    if (n) notices.unshift({
-                        id: n.id, title: n.title, content: n.content,
-                        date: n.date, isImportant: n.is_important, isHTML: n.is_html
+                const newNoticeId = Date.now();
+                const direct = await supabaseClient.from('notices').insert([{
+                    id: newNoticeId, title, content,
+                    date: new Date().toISOString().split('T')[0],
+                    is_important: isImportant, is_html: false
+                }]).select().single();
+                error = direct.error;
+                savedNotice = direct.data;
+                if (error) {
+                    const rpc = await supabaseClient.rpc('admin_upsert_notice', {
+                        p_password: 'ipahs2026', p_id: null, p_title: title,
+                        p_content: content, p_is_important: isImportant, p_is_html: false
                     });
+                    error = rpc.error || (!rpc.data ? new Error('공지 등록 RPC가 저장 결과를 반환하지 않았습니다.') : null);
+                    savedNotice = rpc.data;
                 }
             }
 
-            if (error || !savedNotice) {
-                console.error('공지 저장 오류:', error || 'RPC 결과 없음');
-                showToast('공지 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.', 'warning');
+            if (error) {
+                console.error('공지 저장 오류:', error);
+                showToast('공지 저장에 실패했습니다: ' + (error.message || 'DB 권한을 확인해 주세요.'), 'warning');
                 return;
             }
-            closeNoticeCreateModal();
-            renderNotices();
-            renderAdminPanel();
+
+            if (editId && current) {
+                current.title = savedNotice ? savedNotice.title : title;
+                if (!current.isHTML) current.content = savedNotice ? savedNotice.content : content;
+                current.isImportant = savedNotice ? savedNotice.is_important : isImportant;
+            } else if (savedNotice) {
+                notices.unshift({ id: savedNotice.id, title: savedNotice.title, content: savedNotice.content, date: savedNotice.date, isImportant: savedNotice.is_important, isHTML: savedNotice.is_html });
+            }
+            closeNoticeCreateModal(); renderNotices(); renderAdminPanel();
             showToast(editId ? '공지사항이 성공적으로 수정되었습니다!' : '새 공지사항이 성공적으로 등록되었습니다!');
         }
 
@@ -2060,6 +2051,7 @@ trackerData.unshift(newItem);
     </script>
 </body>
 </html>
+
 
 
 
